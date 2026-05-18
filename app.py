@@ -27,7 +27,6 @@ st.set_page_config(
 # -----------------------------
 
 def get_query_value(name: str, default: str = "") -> str:
-    """Read one value from the URL query string."""
     try:
         value = st.query_params.get(name, default)
     except Exception:
@@ -42,7 +41,6 @@ def get_query_value(name: str, default: str = "") -> str:
 
 
 def selected_to_query_param(selected: set[int]) -> str:
-    """Serialize selected cells for the URL, excluding the free square."""
     return ",".join(
         str(index)
         for index in sorted(selected)
@@ -51,7 +49,6 @@ def selected_to_query_param(selected: set[int]) -> str:
 
 
 def update_query_params(seed: str, selected: set[int]) -> None:
-    """Mirror current Streamlit state into URL query params."""
     selected_text = selected_to_query_param(selected)
 
     try:
@@ -82,19 +79,16 @@ def sync_state_to_url() -> None:
 # -----------------------------
 
 def stable_int_seed(seed_text: str) -> int:
-    """Convert any text seed into a deterministic integer."""
     digest = hashlib.sha256(seed_text.encode("utf-8")).hexdigest()
     return int(digest[:16], 16)
 
 
 def random_seed() -> str:
-    """Generate a short random seed."""
     return hashlib.sha256(str(random.random()).encode("utf-8")).hexdigest()[:10]
 
 
 @st.cache_data
 def load_words() -> list[str]:
-    """Load and deduplicate buzzwords from buzzwords.csv."""
     df = pd.read_csv(WORDS_CSV)
 
     if "word" not in df.columns:
@@ -103,12 +97,10 @@ def load_words() -> list[str]:
     words = df["word"].dropna().astype(str).map(str.strip)
     words = [word for word in words if word]
 
-    # Preserve order while removing duplicates.
     return list(dict.fromkeys(words))
 
 
 def generate_board(words: list[str], seed_text: str) -> list[list[str]]:
-    """Generate a deterministic bingo board from the seed."""
     needed_words = TOTAL_CELLS - 1
 
     if len(words) < needed_words:
@@ -128,7 +120,6 @@ def generate_board(words: list[str], seed_text: str) -> list[list[str]]:
 
 
 def parse_selected_cells(selected_text: str) -> set[int]:
-    """Parse selected indexes from URL query params."""
     selected = {FREE_INDEX}
 
     for part in selected_text.split(","):
@@ -153,7 +144,6 @@ def parse_selected_cells(selected_text: str) -> set[int]:
 # -----------------------------
 
 def all_possible_lines() -> list[list[int]]:
-    """Return all rows, columns, and diagonals."""
     rows = [
         [row * BOARD_SIZE + col for col in range(BOARD_SIZE)]
         for row in range(BOARD_SIZE)
@@ -178,7 +168,6 @@ def all_possible_lines() -> list[list[int]]:
 
 
 def completed_lines(selected: set[int]) -> list[list[int]]:
-    """Return completed rows, columns, and diagonals."""
     return [
         line
         for line in all_possible_lines()
@@ -187,12 +176,10 @@ def completed_lines(selected: set[int]) -> list[list[int]]:
 
 
 def line_signature(line: list[int]) -> str:
-    """Stable ID for a completed line."""
     return ",".join(str(index) for index in line)
 
 
 def current_line_signatures(lines: list[list[int]]) -> set[str]:
-    """Return stable signatures for completed lines."""
     return {
         line_signature(line)
         for line in lines
@@ -200,12 +187,6 @@ def current_line_signatures(lines: list[list[int]]) -> set[str]:
 
 
 def newly_completed_line_signatures(lines: list[list[int]]) -> set[str]:
-    """
-    Return only completed lines that have not already triggered balloons.
-
-    This prevents balloons from firing again when the user keeps selecting
-    unrelated cells after already getting bingo.
-    """
     completed = current_line_signatures(lines)
     celebrated = st.session_state.get("celebrated_line_signatures", set())
 
@@ -213,7 +194,6 @@ def newly_completed_line_signatures(lines: list[list[int]]) -> set[str]:
 
 
 def mark_lines_as_celebrated(line_signatures: set[str]) -> None:
-    """Remember which completed lines have already triggered balloons."""
     celebrated = set(st.session_state.get("celebrated_line_signatures", set()))
     st.session_state.celebrated_line_signatures = celebrated | line_signatures
 
@@ -227,7 +207,6 @@ def reset_celebrations() -> None:
 
 
 def reset_to_seed(seed: str) -> None:
-    """Reset the board state for a specific seed."""
     st.session_state.seed = seed
     st.session_state.seed_input = seed
     st.session_state.selected_cells = {FREE_INDEX}
@@ -237,7 +216,6 @@ def reset_to_seed(seed: str) -> None:
 
 
 def toggle_cell(index: int) -> None:
-    """Toggle a bingo cell and sync the URL."""
     if index == FREE_INDEX:
         return
 
@@ -271,7 +249,6 @@ def reset_marks() -> None:
 
 
 def initialise_state_from_url() -> None:
-    """Initialise Streamlit session state once from URL params."""
     if "has_initialised" in st.session_state:
         return
 
@@ -296,32 +273,39 @@ def inject_css() -> None:
         """
         <style>
         /*
-        The bingo board CSS is scoped to .bingo-board-root so it does not
-        affect sidebar controls or any other Streamlit columns.
+        Important:
+        This targets only the keyed board container:
+            st.container(key="bingo_board")
+
+        Streamlit gives that container a class like:
+            .st-key-bingo_board
         */
 
-        .bingo-board-root {
+        .st-key-bingo_board {
             max-width: 560px;
             margin-left: auto;
             margin-right: auto;
         }
 
-        .bingo-board-root div[data-testid="stHorizontalBlock"] {
+        .st-key-bingo_board div[data-testid="stHorizontalBlock"] {
+            display: flex !important;
+            flex-direction: row !important;
             flex-wrap: nowrap !important;
             gap: 0.25rem !important;
         }
 
-        .bingo-board-root div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        .st-key-bingo_board div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
             min-width: 0 !important;
-            flex: 1 1 0 !important;
             width: 20% !important;
+            flex: 0 0 calc(20% - 0.2rem) !important;
         }
 
-        .bingo-board-root div[data-testid="column"] div.stButton {
+        .st-key-bingo_board div[data-testid="column"] div.stButton {
             width: 100%;
+            height: 100%;
         }
 
-        .bingo-board-root div[data-testid="column"] div.stButton > button {
+        .st-key-bingo_board div[data-testid="column"] div.stButton > button {
             width: 100%;
             min-width: 0;
             min-height: 88px;
@@ -336,25 +320,26 @@ def inject_css() -> None:
             hyphens: auto;
         }
 
-        .bingo-board-root div[data-testid="stVerticalBlock"]:has(> div[data-testid="stHorizontalBlock"]) {
-            gap: 0.25rem;
-        }
-
         @media (max-width: 640px) {
             .block-container {
                 padding-left: 0.35rem;
                 padding-right: 0.35rem;
             }
 
-            .bingo-board-root {
+            .st-key-bingo_board {
                 max-width: 100%;
             }
 
-            .bingo-board-root div[data-testid="stHorizontalBlock"] {
-                gap: 0.15rem !important;
+            .st-key-bingo_board div[data-testid="stHorizontalBlock"] {
+                gap: 0.12rem !important;
             }
 
-            .bingo-board-root div[data-testid="column"] div.stButton > button {
+            .st-key-bingo_board div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+                width: 20% !important;
+                flex: 0 0 calc(20% - 0.1rem) !important;
+            }
+
+            .st-key-bingo_board div[data-testid="column"] div.stButton > button {
                 min-height: 56px;
                 font-size: 0.56rem;
                 line-height: 1;
@@ -364,7 +349,7 @@ def inject_css() -> None:
         }
 
         @media (max-width: 380px) {
-            .bingo-board-root div[data-testid="column"] div.stButton > button {
+            .st-key-bingo_board div[data-testid="column"] div.stButton > button {
                 min-height: 50px;
                 font-size: 0.5rem;
                 padding: 0.06rem;
@@ -444,7 +429,6 @@ def cell_label(
     selected: set[int],
     winning_indexes: set[int],
 ) -> tuple[str, str]:
-    """Return the button label and Streamlit button type."""
     if index in winning_indexes:
         return f"🎉 {value}", "primary"
 
@@ -454,49 +438,38 @@ def cell_label(
     return value, "secondary"
 
 
-def open_board_scope() -> None:
-    st.markdown('<div class="bingo-board-root">', unsafe_allow_html=True)
-
-
-def close_board_scope() -> None:
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
 def render_board(
     board: list[list[str]],
     selected: set[int],
     winning_indexes: set[int],
 ) -> None:
-    open_board_scope()
-
-    for row_index, row in enumerate(board):
-        columns = st.columns(
-            [1] * BOARD_SIZE,
-            gap="small",
-            vertical_alignment="center",
-        )
-
-        for col_index, value in enumerate(row):
-            index = row_index * BOARD_SIZE + col_index
-            label, button_type = cell_label(
-                value=value,
-                index=index,
-                selected=selected,
-                winning_indexes=winning_indexes,
+    with st.container(key="bingo_board"):
+        for row_index, row in enumerate(board):
+            columns = st.columns(
+                [1] * BOARD_SIZE,
+                gap="small",
+                vertical_alignment="center",
             )
 
-            with columns[col_index]:
-                st.button(
-                    label,
-                    key=f"cell_{index}",
-                    type=button_type,
-                    disabled=index == FREE_INDEX,
-                    on_click=toggle_cell,
-                    args=(index,),
-                    use_container_width=True,
+            for col_index, value in enumerate(row):
+                index = row_index * BOARD_SIZE + col_index
+                label, button_type = cell_label(
+                    value=value,
+                    index=index,
+                    selected=selected,
+                    winning_indexes=winning_indexes,
                 )
 
-    close_board_scope()
+                with columns[col_index]:
+                    st.button(
+                        label,
+                        key=f"cell_{index}",
+                        type=button_type,
+                        disabled=index == FREE_INDEX,
+                        on_click=toggle_cell,
+                        args=(index,),
+                        use_container_width=True,
+                    )
 
 
 def render_status(lines: list[list[int]], selected: set[int]) -> None:
