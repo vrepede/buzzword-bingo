@@ -296,28 +296,35 @@ def inject_css() -> None:
         """
         <style>
         /*
-        Streamlit stacks st.columns vertically on narrow screens.
-        These rules force each bingo row to remain a 5-column grid.
+        The bingo board CSS is scoped to .bingo-board-root so it does not
+        affect sidebar controls or any other Streamlit columns.
         */
-        div[data-testid="stHorizontalBlock"] {
+
+        .bingo-board-root {
+            max-width: 560px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .bingo-board-root div[data-testid="stHorizontalBlock"] {
             flex-wrap: nowrap !important;
             gap: 0.25rem !important;
         }
 
-        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        .bingo-board-root div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
             min-width: 0 !important;
             flex: 1 1 0 !important;
             width: 20% !important;
         }
 
-        div[data-testid="column"] div.stButton {
+        .bingo-board-root div[data-testid="column"] div.stButton {
             width: 100%;
         }
 
-        div[data-testid="column"] div.stButton > button {
+        .bingo-board-root div[data-testid="column"] div.stButton > button {
             width: 100%;
             min-width: 0;
-            min-height: 96px;
+            min-height: 88px;
             aspect-ratio: 1 / 1;
             white-space: normal;
             line-height: 1.1;
@@ -329,7 +336,7 @@ def inject_css() -> None:
             hyphens: auto;
         }
 
-        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stHorizontalBlock"]) {
+        .bingo-board-root div[data-testid="stVerticalBlock"]:has(> div[data-testid="stHorizontalBlock"]) {
             gap: 0.25rem;
         }
 
@@ -339,24 +346,28 @@ def inject_css() -> None:
                 padding-right: 0.35rem;
             }
 
-            div[data-testid="stHorizontalBlock"] {
+            .bingo-board-root {
+                max-width: 100%;
+            }
+
+            .bingo-board-root div[data-testid="stHorizontalBlock"] {
                 gap: 0.15rem !important;
             }
 
-            div[data-testid="column"] div.stButton > button {
-                min-height: 58px;
-                font-size: 0.58rem;
+            .bingo-board-root div[data-testid="column"] div.stButton > button {
+                min-height: 56px;
+                font-size: 0.56rem;
                 line-height: 1;
                 border-radius: 8px;
-                padding: 0.12rem;
+                padding: 0.1rem;
             }
         }
 
         @media (max-width: 380px) {
-            div[data-testid="column"] div.stButton > button {
-                min-height: 52px;
-                font-size: 0.52rem;
-                padding: 0.08rem;
+            .bingo-board-root div[data-testid="column"] div.stButton > button {
+                min-height: 50px;
+                font-size: 0.5rem;
+                padding: 0.06rem;
             }
         }
 
@@ -427,7 +438,12 @@ def render_sidebar(words: list[str]) -> None:
         )
 
 
-def cell_label(value: str, index: int, selected: set[int], winning_indexes: set[int]) -> tuple[str, str]:
+def cell_label(
+    value: str,
+    index: int,
+    selected: set[int],
+    winning_indexes: set[int],
+) -> tuple[str, str]:
     """Return the button label and Streamlit button type."""
     if index in winning_indexes:
         return f"🎉 {value}", "primary"
@@ -438,36 +454,49 @@ def cell_label(value: str, index: int, selected: set[int], winning_indexes: set[
     return value, "secondary"
 
 
+def open_board_scope() -> None:
+    st.markdown('<div class="bingo-board-root">', unsafe_allow_html=True)
+
+
+def close_board_scope() -> None:
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_board(
     board: list[list[str]],
     selected: set[int],
     winning_indexes: set[int],
 ) -> None:
-    board_container = st.container(border=False)
+    open_board_scope()
 
-    with board_container:
-        for row_index, row in enumerate(board):
-            with st.container(border=False):
-                columns = st.columns(
-                    [1] * BOARD_SIZE,
-                    gap="small",
-                    vertical_alignment="center",
+    for row_index, row in enumerate(board):
+        columns = st.columns(
+            [1] * BOARD_SIZE,
+            gap="small",
+            vertical_alignment="center",
+        )
+
+        for col_index, value in enumerate(row):
+            index = row_index * BOARD_SIZE + col_index
+            label, button_type = cell_label(
+                value=value,
+                index=index,
+                selected=selected,
+                winning_indexes=winning_indexes,
+            )
+
+            with columns[col_index]:
+                st.button(
+                    label,
+                    key=f"cell_{index}",
+                    type=button_type,
+                    disabled=index == FREE_INDEX,
+                    on_click=toggle_cell,
+                    args=(index,),
+                    use_container_width=True,
                 )
 
-                for col_index, value in enumerate(row):
-                    index = row_index * BOARD_SIZE + col_index
-                    label, button_type = cell_label(value, index, selected, winning_indexes)
-
-                    with columns[col_index]:
-                        st.button(
-                            label,
-                            key=f"cell_{index}",
-                            type=button_type,
-                            disabled=index == FREE_INDEX,
-                            on_click=toggle_cell,
-                            args=(index,),
-                            use_container_width=True,
-                        )
+    close_board_scope()
 
 
 def render_status(lines: list[list[int]], selected: set[int]) -> None:
