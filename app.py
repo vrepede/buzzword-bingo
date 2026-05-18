@@ -813,10 +813,13 @@ def main() -> None:
     board_values = generate_board(words, st.session_state.seed)
     selected = set(st.session_state.selected_cells)
 
-    st.title("🎯 Buzzword Bingo")
-    st.caption(
-        "The board below is pure HTML/CSS/JS. Clicks are handled client-side, "
-        "and the selected cells are mirrored into the URL."
+    st.subheader("🎯 Buzzword Bingo")
+    st.markdown(
+        """
+        🎉 **Welcome to the most fabulous game of corporate speak!** 🎉
+        
+        It's like bingo, but *enterprise-ready*. ✨
+        """
     )
 
     render_sidebar(words)
