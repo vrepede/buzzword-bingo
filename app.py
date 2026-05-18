@@ -1,20 +1,26 @@
 import hashlib
-import html
 import random
 from pathlib import Path
-from urllib.parse import urlencode
 
 import pandas as pd
 import streamlit as st
 
 APP_TITLE = "Buzzword Bingo"
 WORDS_CSV = Path(__file__).parent / "buzzwords.csv"
+
 BOARD_SIZE = 5
 FREE_SPACE = "FREE SPACE"
+DEFAULT_SEED = "team-all-hands"
 
+TOTAL_CELLS = BOARD_SIZE * BOARD_SIZE
+FREE_INDEX = TOTAL_CELLS // 2
 
 st.set_page_config(page_title=APP_TITLE, page_icon="🎯", layout="centered")
 
+
+# -----------------------------
+# URL/query-param helpers
+# -----------------------------
 
 def get_query_value(name: str, default: str = "") -> str:
     """Read a single value from the URL query string."""
@@ -27,17 +33,45 @@ def get_query_value(name: str, default: str = "") -> str:
 
     if isinstance(value, list):
         value = value[0] if value else default
+
     return str(value).strip()
 
 
-def set_query_seed(seed: str) -> None:
-    """Write ?seed=... into the URL and clear selected cells for the new card."""
+def selected_param(selected: set[int]) -> str:
+    """Serialize selected cells for the URL, excluding the free square."""
+    return ",".join(
+        str(index)
+        for index in sorted(selected)
+        if index != FREE_INDEX
+    )
+
+
+def set_query_params(seed: str, selected: set[int]) -> None:
+    """Mirror current Streamlit state into the URL query params."""
+    selected_text = selected_param(selected)
+
     try:
         st.query_params.clear()
         st.query_params["seed"] = seed
+        if selected_text:
+            st.query_params["selected"] = selected_text
     except Exception:
-        st.experimental_set_query_params(seed=seed)
+        params = {"seed": seed}
+        if selected_text:
+            params["selected"] = selected_text
+        st.experimental_set_query_params(**params)
 
+
+def sync_state_to_url() -> None:
+    set_query_params(
+        st.session_state.seed,
+        st.session_state.selected_cells,
+    )
+
+
+# -----------------------------
+# Board generation
+# -----------------------------
 
 def stable_int_seed(seed_text: str) -> int:
     """Convert any text seed into a deterministic integer seed."""
@@ -48,34 +82,46 @@ def stable_int_seed(seed_text: str) -> int:
 @st.cache_data
 def load_words() -> list[str]:
     df = pd.read_csv(WORDS_CSV)
+
     if "word" not in df.columns:
         raise ValueError("buzzwords.csv must contain a column named 'word'.")
 
     words = df["word"].dropna().astype(str).map(str.strip)
     words = [word for word in words if word]
 
-    # Keep the first occurrence while removing duplicates.
+    # Keep first occurrence while removing duplicates.
     return list(dict.fromkeys(words))
 
 
-def generate_board(words: list[str], seed_text: str, board_size: int = BOARD_SIZE) -> list[list[str]]:
+def generate_board(
+    words: list[str],
+    seed_text: str,
+    board_size: int = BOARD_SIZE,
+) -> list[list[str]]:
     total_cells = board_size * board_size
     free_index = total_cells // 2
     needed_words = total_cells - 1
 
     if len(words) < needed_words:
         raise ValueError(
-            f"Need at least {needed_words} unique words in buzzwords.csv; found {len(words)}."
+            f"Need at least {needed_words} unique words in buzzwords.csv; "
+            f"found {len(words)}."
         )
 
     rng = random.Random(stable_int_seed(seed_text))
-    selected = rng.sample(words, needed_words)
-    selected.insert(free_index, FREE_SPACE)
+    selected_words = rng.sample(words, needed_words)
+    selected_words.insert(free_index, FREE_SPACE)
 
-    return [selected[i : i + board_size] for i in range(0, total_cells, board_size)]
+    return [
+        selected_words[i: i + board_size]
+        for i in range(0, total_cells, board_size)
+    ]
 
 
-def parse_selected_cells(selected_text: str, board_size: int = BOARD_SIZE) -> set[int]:
+def parse_selected_cells(
+    selected_text: str,
+    board_size: int = BOARD_SIZE,
+) -> set[int]:
     """Read selected cell indexes from the URL, always including the free square."""
     total_cells = board_size * board_size
     free_index = total_cells // 2
@@ -85,115 +131,234 @@ def parse_selected_cells(selected_text: str, board_size: int = BOARD_SIZE) -> se
         part = part.strip()
         if not part:
             continue
+
         try:
             index = int(part)
         except ValueError:
             continue
+
         if 0 <= index < total_cells:
             selected.add(index)
 
     return selected
 
 
-def make_card_url(seed: str, selected: set[int]) -> str:
-    """Create a relative URL containing the seed and currently selected cells."""
-    total_cells = BOARD_SIZE * BOARD_SIZE
-    free_index = total_cells // 2
-    selected_without_free = sorted(index for index in selected if index != free_index)
+# -----------------------------
+# Bingo logic
+# -----------------------------
 
-    query = {"seed": seed}
-    if selected_without_free:
-        query["selected"] = ",".join(str(index) for index in selected_without_free)
-    return "?" + urlencode(query)
+def all_possible_lines(board_size: int = BOARD_SIZE) -> list[list[int]]:
+    """Return all rows, columns, and diagonals."""
+    lines: list[list[int]] = []
 
-
-def toggle_url(seed: str, selected: set[int], index: int) -> str:
-    """Return the URL that toggles one cell on or off."""
-    total_cells = BOARD_SIZE * BOARD_SIZE
-    free_index = total_cells // 2
-    next_selected = set(selected)
-
-    if index != free_index:
-        if index in next_selected:
-            next_selected.remove(index)
-        else:
-            next_selected.add(index)
-
-    return make_card_url(seed, next_selected)
-
-
-def completed_lines(selected: set[int], board_size: int = BOARD_SIZE) -> list[list[int]]:
-    """Return completed rows, columns, and diagonals."""
-    lines = []
-
+    # Rows
     for row in range(board_size):
-        lines.append([row * board_size + col for col in range(board_size)])
+        lines.append([
+            row * board_size + col
+            for col in range(board_size)
+        ])
 
+    # Columns
     for col in range(board_size):
-        lines.append([row * board_size + col for row in range(board_size)])
+        lines.append([
+            row * board_size + col
+            for row in range(board_size)
+        ])
 
-    lines.append([i * board_size + i for i in range(board_size)])
-    lines.append([i * board_size + (board_size - 1 - i) for i in range(board_size)])
+    # Diagonals
+    lines.append([
+        i * board_size + i
+        for i in range(board_size)
+    ])
 
-    return [line for line in lines if all(index in selected for index in line)]
+    lines.append([
+        i * board_size + (board_size - 1 - i)
+        for i in range(board_size)
+    ])
+
+    return lines
 
 
-def board_html(board: list[list[str]], seed: str, selected: set[int], winning_indexes: set[int]) -> str:
-    cells = []
+def completed_lines(
+    selected: set[int],
+    board_size: int = BOARD_SIZE,
+) -> list[list[int]]:
+    """Return completed rows, columns, and diagonals."""
+    return [
+        line
+        for line in all_possible_lines(board_size)
+        if all(index in selected for index in line)
+    ]
 
-    for row_index, row in enumerate(board):
-        for col_index, value in enumerate(row):
-            index = row_index * BOARD_SIZE + col_index
-            classes = ["cell"]
-            if value == FREE_SPACE:
-                classes.append("free")
-            if index in selected:
-                classes.append("selected")
-            if index in winning_indexes:
-                classes.append("winning")
 
-            href = html.escape(toggle_url(seed, selected, index), quote=True)
-            label = html.escape(value)
-            aria_label = html.escape(f"Toggle {value}", quote=True)
-            cells.append(
-                f'<a class="{" ".join(classes)}" href="{href}" aria-label="{aria_label}">{label}</a>'
-            )
+def line_signature(line: list[int]) -> str:
+    """Stable ID for a completed line."""
+    return ",".join(str(index) for index in line)
 
-    return f'<div class="bingo-board">{"".join(cells)}</div>'
 
+def get_new_completed_line_signatures(lines: list[list[int]]) -> set[str]:
+    """
+    Return completed lines that have not yet triggered balloons.
+
+    This is the important part: celebration state is based on completed lines,
+    not on the full selected-cell set. That means selecting extra squares after
+    a bingo does not re-trigger balloons.
+    """
+    current_line_signatures = {
+        line_signature(line)
+        for line in lines
+    }
+
+    already_celebrated = set(
+        st.session_state.get("celebrated_line_signatures", set())
+    )
+
+    return current_line_signatures - already_celebrated
+
+
+def mark_lines_as_celebrated(line_signatures: set[str]) -> None:
+    already_celebrated = set(
+        st.session_state.get("celebrated_line_signatures", set())
+    )
+
+    st.session_state.celebrated_line_signatures = (
+        already_celebrated | line_signatures
+    )
+
+
+# -----------------------------
+# State callbacks
+# -----------------------------
+
+def toggle_cell(index: int) -> None:
+    if index == FREE_INDEX:
+        return
+
+    selected = set(st.session_state.selected_cells)
+
+    if index in selected:
+        selected.remove(index)
+    else:
+        selected.add(index)
+
+    selected.add(FREE_INDEX)
+
+    st.session_state.selected_cells = selected
+    sync_state_to_url()
+
+
+def reset_celebrations() -> None:
+    st.session_state.celebrated_line_signatures = set()
+
+
+def apply_seed() -> None:
+    seed = st.session_state.seed_input.strip() or DEFAULT_SEED
+
+    st.session_state.seed = seed
+    st.session_state.selected_cells = {FREE_INDEX}
+
+    reset_celebrations()
+    sync_state_to_url()
+
+
+def randomize_seed() -> None:
+    seed = hashlib.sha256(str(random.random()).encode()).hexdigest()[:10]
+
+    st.session_state.seed = seed
+    st.session_state.seed_input = seed
+    st.session_state.selected_cells = {FREE_INDEX}
+
+    reset_celebrations()
+    sync_state_to_url()
+
+
+def reset_marks() -> None:
+    st.session_state.selected_cells = {FREE_INDEX}
+
+    reset_celebrations()
+    sync_state_to_url()
+
+
+# -----------------------------
+# Initial state
+# -----------------------------
+
+url_seed = get_query_value("seed", DEFAULT_SEED) or DEFAULT_SEED
+url_selected = get_query_value("selected", "")
+url_signature = (url_seed, url_selected)
+
+if "url_signature" not in st.session_state:
+    st.session_state.url_signature = url_signature
+    st.session_state.seed = url_seed
+    st.session_state.seed_input = url_seed
+    st.session_state.selected_cells = parse_selected_cells(url_selected)
+    st.session_state.celebrated_line_signatures = set()
+
+    sync_state_to_url()
+
+if "celebrated_line_signatures" not in st.session_state:
+    st.session_state.celebrated_line_signatures = set()
+
+
+# -----------------------------
+# Data + derived state
+# -----------------------------
+
+words = load_words()
+board = generate_board(words, st.session_state.seed)
+
+selected = set(st.session_state.selected_cells)
+lines = completed_lines(selected)
+winning_indexes = {
+    index
+    for line in lines
+    for index in line
+}
+has_bingo = bool(lines)
+
+
+# -----------------------------
+# UI
+# -----------------------------
 
 st.title("🎯 Buzzword Bingo")
 st.caption("A deterministic bingo card generated from a seed in the URL.")
 
-words = load_words()
-url_seed = get_query_value("seed")
-selected_text = get_query_value("selected")
-
 with st.sidebar:
     st.header("Card settings")
-    seed = st.text_input(
+
+    st.text_input(
         "Seed",
-        value=url_seed or "team-all-hands",
+        key="seed_input",
         help="The same seed always creates the same bingo card.",
-    ).strip()
+    )
 
     col_a, col_b = st.columns(2)
+
     with col_a:
-        apply_seed = st.button("Apply seed", use_container_width=True)
+        st.button(
+            "Apply seed",
+            on_click=apply_seed,
+            use_container_width=True,
+        )
+
     with col_b:
-        random_seed = st.button("Random", use_container_width=True)
+        st.button(
+            "Random",
+            on_click=randomize_seed,
+            use_container_width=True,
+        )
 
-    if random_seed:
-        seed = hashlib.sha256(str(random.random()).encode()).hexdigest()[:10]
-        set_query_seed(seed)
-        st.rerun()
-
-    if apply_seed:
-        set_query_seed(seed)
-        st.rerun()
+    st.button(
+        "Reset marked squares",
+        on_click=reset_marks,
+        use_container_width=True,
+    )
 
     st.divider()
+
     st.write(f"Loaded **{len(words)}** buzzwords.")
+
     st.download_button(
         "Download word CSV",
         data=WORDS_CSV.read_text(encoding="utf-8"),
@@ -202,76 +367,48 @@ with st.sidebar:
         use_container_width=True,
     )
 
-if not seed:
-    seed = "team-all-hands"
-
-# Keep URL populated on first load.
-if not url_seed:
-    set_query_seed(seed)
-
-board = generate_board(words, seed)
-selected = parse_selected_cells(selected_text)
-lines = completed_lines(selected)
-winning_indexes = {index for line in lines for index in line}
-has_bingo = bool(lines)
 
 st.markdown(
     """
     <style>
-    .bingo-board {
-        display: grid;
-        grid-template-columns: repeat(5, minmax(80px, 1fr));
-        gap: 8px;
-        margin-top: 1.25rem;
-    }
-    .cell {
-        min-height: 95px;
-        border: 2px solid rgba(49, 51, 63, 0.25);
-        border-radius: 12px;
-        padding: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        font-weight: 700;
+    div[data-testid="column"] div.stButton > button {
+        min-height: 96px;
+        width: 100%;
+        white-space: normal;
         line-height: 1.15;
-        background: rgba(250, 250, 250, 0.88);
-        box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-        user-select: none;
-        text-decoration: none !important;
-        color: inherit !important;
-        transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+        font-weight: 700;
+        border-radius: 12px;
+        padding: 0.55rem;
+        aspect-ratio: 1 / 1;
     }
-    .cell:hover {
-        transform: translateY(-1px);
-        border-color: rgba(255, 75, 75, 0.65);
+
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="stHorizontalBlock"]) {
+        gap: 0.35rem;
     }
-    .cell.selected {
-        background: rgba(255, 75, 75, 0.20);
-        border-color: rgba(255, 75, 75, 0.85);
+
+    @media (max-width: 640px) {
+        div[data-testid="column"] div.stButton > button {
+            min-height: 70px;
+            font-size: 0.72rem;
+            line-height: 1.05;
+            padding: 0.25rem;
+        }
+
+        div[data-testid="column"] {
+            min-width: 0 !important;
+        }
     }
-    .cell.free {
-        border-style: dashed;
-        background: rgba(255, 237, 160, 0.85);
-    }
-    .cell.free.selected {
-        background: rgba(255, 237, 160, 0.95);
-    }
-    .cell.winning {
-        background: rgba(36, 171, 96, 0.24);
-        border-color: rgba(36, 171, 96, 0.95);
-        box-shadow: 0 0 0 3px rgba(36, 171, 96, 0.18);
-    }
+
     @media print {
-        header, footer, [data-testid="stSidebar"], [data-testid="stToolbar"] {
+        header,
+        footer,
+        [data-testid="stSidebar"],
+        [data-testid="stToolbar"] {
             display: none !important;
         }
+
         .block-container {
             padding-top: 1rem;
-        }
-        .cell {
-            border-color: #333;
-            box-shadow: none;
         }
     }
     </style>
@@ -279,25 +416,93 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.subheader(f"Card seed: `{seed}`")
-st.caption("Click a square to mark it. The selection is saved in the URL, so the card can be shared mid-game.")
-st.markdown(board_html(board, seed, selected, winning_indexes), unsafe_allow_html=True)
+st.subheader(f"Card seed: `{st.session_state.seed}`")
+st.caption(
+    "Click a square to mark it. The app uses st.session_state for clicks "
+    "and mirrors the state into the URL."
+)
+
+
+# -----------------------------
+# Board rendering
+# -----------------------------
+
+board_container = st.container(border=False)
+
+with board_container:
+    for row_index, row in enumerate(board):
+        # Each row is grouped in a vertical container.
+        # The row itself is split into equal-width columns for mobile-friendly sizing.
+        with st.container(border=False):
+            columns = st.columns(
+                [1] * BOARD_SIZE,
+                gap="small",
+                vertical_alignment="center",
+            )
+
+            for col_index, value in enumerate(row):
+                index = row_index * BOARD_SIZE + col_index
+
+                is_free = index == FREE_INDEX
+                is_selected = index in selected
+                is_winning = index in winning_indexes
+
+                if is_winning:
+                    label = f"🎉 {value}"
+                    button_type = "primary"
+                elif is_selected:
+                    label = f"✅ {value}"
+                    button_type = "primary"
+                else:
+                    label = value
+                    button_type = "secondary"
+
+                with columns[col_index]:
+                    with st.container(border=False):
+                        st.button(
+                            label,
+                            key=f"cell_{index}",
+                            type=button_type,
+                            disabled=is_free,
+                            on_click=toggle_cell,
+                            args=(index,),
+                            use_container_width=True,
+                        )
+
+
+# -----------------------------
+# Celebration + status
+# -----------------------------
 
 if has_bingo:
-    bingo_key = f"{seed}:{','.join(str(i) for i in sorted(selected))}"
-    if st.session_state.get("last_bingo_key") != bingo_key:
+    new_completed_lines = get_new_completed_line_signatures(lines)
+
+    if new_completed_lines:
         st.balloons()
-        st.session_state["last_bingo_key"] = bingo_key
+        mark_lines_as_celebrated(new_completed_lines)
 
     line_word = "line" if len(lines) == 1 else "lines"
     st.success(f"Bingo! You completed {len(lines)} {line_word}. 🎉")
 else:
-    marked_count = len(selected) - 1  # Exclude the free square.
+    marked_count = len(selected) - 1
     st.info(f"Marked **{marked_count}** squares. Keep going!")
 
+
+# -----------------------------
+# Share hint
+# -----------------------------
+
+share_suffix = f"?seed={st.session_state.seed}"
+
+selected_text = selected_param(selected)
+if selected_text:
+    share_suffix += f"&selected={selected_text}"
+
 st.write("")
+
 st.info(
     "Share this exact card by copying the page URL. "
-    f"The important part is `{make_card_url(seed, selected)}`."
+    f"The important part is `{share_suffix}`."
 )
+
 st.caption("Tip: use your browser's print command to save a card as PDF.")
