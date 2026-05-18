@@ -416,7 +416,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.subheader(f"Card seed: `{st.session_state.seed}`")
 st.caption(
     "Click a square to mark it. The app uses st.session_state for clicks "
     "and mirrors the state into the URL."
@@ -497,12 +496,5 @@ share_suffix = f"?seed={st.session_state.seed}"
 selected_text = selected_param(selected)
 if selected_text:
     share_suffix += f"&selected={selected_text}"
-
-st.write("")
-
-st.info(
-    "Share this exact card by copying the page URL. "
-    f"The important part is `{share_suffix}`."
-)
 
 st.caption("Tip: use your browser's print command to save a card as PDF.")
