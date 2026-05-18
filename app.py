@@ -15,15 +15,19 @@ DEFAULT_SEED = "team-all-hands"
 TOTAL_CELLS = BOARD_SIZE * BOARD_SIZE
 FREE_INDEX = TOTAL_CELLS // 2
 
-st.set_page_config(page_title=APP_TITLE, page_icon="🎯", layout="centered")
+st.set_page_config(
+    page_title=APP_TITLE,
+    page_icon="🎯",
+    layout="centered",
+)
 
 
 # -----------------------------
-# URL/query-param helpers
+# Query param helpers
 # -----------------------------
 
 def get_query_value(name: str, default: str = "") -> str:
-    """Read a single value from the URL query string."""
+    """Read one value from the URL query string."""
     try:
         value = st.query_params.get(name, default)
     except Exception:
@@ -37,7 +41,7 @@ def get_query_value(name: str, default: str = "") -> str:
     return str(value).strip()
 
 
-def selected_param(selected: set[int]) -> str:
+def selected_to_query_param(selected: set[int]) -> str:
     """Serialize selected cells for the URL, excluding the free square."""
     return ",".join(
         str(index)
@@ -46,41 +50,51 @@ def selected_param(selected: set[int]) -> str:
     )
 
 
-def set_query_params(seed: str, selected: set[int]) -> None:
-    """Mirror current Streamlit state into the URL query params."""
-    selected_text = selected_param(selected)
+def update_query_params(seed: str, selected: set[int]) -> None:
+    """Mirror current Streamlit state into URL query params."""
+    selected_text = selected_to_query_param(selected)
 
     try:
         st.query_params.clear()
         st.query_params["seed"] = seed
+
         if selected_text:
             st.query_params["selected"] = selected_text
+
     except Exception:
         params = {"seed": seed}
+
         if selected_text:
             params["selected"] = selected_text
+
         st.experimental_set_query_params(**params)
 
 
 def sync_state_to_url() -> None:
-    set_query_params(
-        st.session_state.seed,
-        st.session_state.selected_cells,
+    update_query_params(
+        seed=st.session_state.seed,
+        selected=st.session_state.selected_cells,
     )
 
 
 # -----------------------------
-# Board generation
+# Seed + board generation
 # -----------------------------
 
 def stable_int_seed(seed_text: str) -> int:
-    """Convert any text seed into a deterministic integer seed."""
+    """Convert any text seed into a deterministic integer."""
     digest = hashlib.sha256(seed_text.encode("utf-8")).hexdigest()
     return int(digest[:16], 16)
 
 
+def random_seed() -> str:
+    """Generate a short random seed."""
+    return hashlib.sha256(str(random.random()).encode("utf-8")).hexdigest()[:10]
+
+
 @st.cache_data
 def load_words() -> list[str]:
+    """Load and deduplicate buzzwords from buzzwords.csv."""
     df = pd.read_csv(WORDS_CSV)
 
     if "word" not in df.columns:
@@ -89,18 +103,13 @@ def load_words() -> list[str]:
     words = df["word"].dropna().astype(str).map(str.strip)
     words = [word for word in words if word]
 
-    # Keep first occurrence while removing duplicates.
+    # Preserve order while removing duplicates.
     return list(dict.fromkeys(words))
 
 
-def generate_board(
-    words: list[str],
-    seed_text: str,
-    board_size: int = BOARD_SIZE,
-) -> list[list[str]]:
-    total_cells = board_size * board_size
-    free_index = total_cells // 2
-    needed_words = total_cells - 1
+def generate_board(words: list[str], seed_text: str) -> list[list[str]]:
+    """Generate a deterministic bingo board from the seed."""
+    needed_words = TOTAL_CELLS - 1
 
     if len(words) < needed_words:
         raise ValueError(
@@ -109,26 +118,22 @@ def generate_board(
         )
 
     rng = random.Random(stable_int_seed(seed_text))
-    selected_words = rng.sample(words, needed_words)
-    selected_words.insert(free_index, FREE_SPACE)
+    board_values = rng.sample(words, needed_words)
+    board_values.insert(FREE_INDEX, FREE_SPACE)
 
     return [
-        selected_words[i: i + board_size]
-        for i in range(0, total_cells, board_size)
+        board_values[index: index + BOARD_SIZE]
+        for index in range(0, TOTAL_CELLS, BOARD_SIZE)
     ]
 
 
-def parse_selected_cells(
-    selected_text: str,
-    board_size: int = BOARD_SIZE,
-) -> set[int]:
-    """Read selected cell indexes from the URL, always including the free square."""
-    total_cells = board_size * board_size
-    free_index = total_cells // 2
-    selected = {free_index}
+def parse_selected_cells(selected_text: str) -> set[int]:
+    """Parse selected indexes from URL query params."""
+    selected = {FREE_INDEX}
 
     for part in selected_text.split(","):
         part = part.strip()
+
         if not part:
             continue
 
@@ -137,7 +142,7 @@ def parse_selected_cells(
         except ValueError:
             continue
 
-        if 0 <= index < total_cells:
+        if 0 <= index < TOTAL_CELLS:
             selected.add(index)
 
     return selected
@@ -147,46 +152,36 @@ def parse_selected_cells(
 # Bingo logic
 # -----------------------------
 
-def all_possible_lines(board_size: int = BOARD_SIZE) -> list[list[int]]:
+def all_possible_lines() -> list[list[int]]:
     """Return all rows, columns, and diagonals."""
-    lines: list[list[int]] = []
+    rows = [
+        [row * BOARD_SIZE + col for col in range(BOARD_SIZE)]
+        for row in range(BOARD_SIZE)
+    ]
 
-    # Rows
-    for row in range(board_size):
-        lines.append([
-            row * board_size + col
-            for col in range(board_size)
-        ])
+    columns = [
+        [row * BOARD_SIZE + col for row in range(BOARD_SIZE)]
+        for col in range(BOARD_SIZE)
+    ]
 
-    # Columns
-    for col in range(board_size):
-        lines.append([
-            row * board_size + col
-            for row in range(board_size)
-        ])
+    diagonal_a = [
+        index * BOARD_SIZE + index
+        for index in range(BOARD_SIZE)
+    ]
 
-    # Diagonals
-    lines.append([
-        i * board_size + i
-        for i in range(board_size)
-    ])
+    diagonal_b = [
+        index * BOARD_SIZE + (BOARD_SIZE - 1 - index)
+        for index in range(BOARD_SIZE)
+    ]
 
-    lines.append([
-        i * board_size + (board_size - 1 - i)
-        for i in range(board_size)
-    ])
-
-    return lines
+    return rows + columns + [diagonal_a, diagonal_b]
 
 
-def completed_lines(
-    selected: set[int],
-    board_size: int = BOARD_SIZE,
-) -> list[list[int]]:
+def completed_lines(selected: set[int]) -> list[list[int]]:
     """Return completed rows, columns, and diagonals."""
     return [
         line
-        for line in all_possible_lines(board_size)
+        for line in all_possible_lines()
         if all(index in selected for index in line)
     ]
 
@@ -196,41 +191,53 @@ def line_signature(line: list[int]) -> str:
     return ",".join(str(index) for index in line)
 
 
-def get_new_completed_line_signatures(lines: list[list[int]]) -> set[str]:
-    """
-    Return completed lines that have not yet triggered balloons.
-
-    This is the important part: celebration state is based on completed lines,
-    not on the full selected-cell set. That means selecting extra squares after
-    a bingo does not re-trigger balloons.
-    """
-    current_line_signatures = {
+def current_line_signatures(lines: list[list[int]]) -> set[str]:
+    """Return stable signatures for completed lines."""
+    return {
         line_signature(line)
         for line in lines
     }
 
-    already_celebrated = set(
-        st.session_state.get("celebrated_line_signatures", set())
-    )
 
-    return current_line_signatures - already_celebrated
+def newly_completed_line_signatures(lines: list[list[int]]) -> set[str]:
+    """
+    Return only completed lines that have not already triggered balloons.
+
+    This prevents balloons from firing again when the user keeps selecting
+    unrelated cells after already getting bingo.
+    """
+    completed = current_line_signatures(lines)
+    celebrated = st.session_state.get("celebrated_line_signatures", set())
+
+    return completed - set(celebrated)
 
 
 def mark_lines_as_celebrated(line_signatures: set[str]) -> None:
-    already_celebrated = set(
-        st.session_state.get("celebrated_line_signatures", set())
-    )
-
-    st.session_state.celebrated_line_signatures = (
-        already_celebrated | line_signatures
-    )
+    """Remember which completed lines have already triggered balloons."""
+    celebrated = set(st.session_state.get("celebrated_line_signatures", set()))
+    st.session_state.celebrated_line_signatures = celebrated | line_signatures
 
 
 # -----------------------------
-# State callbacks
+# State helpers and callbacks
 # -----------------------------
+
+def reset_celebrations() -> None:
+    st.session_state.celebrated_line_signatures = set()
+
+
+def reset_to_seed(seed: str) -> None:
+    """Reset the board state for a specific seed."""
+    st.session_state.seed = seed
+    st.session_state.seed_input = seed
+    st.session_state.selected_cells = {FREE_INDEX}
+
+    reset_celebrations()
+    sync_state_to_url()
+
 
 def toggle_cell(index: int) -> None:
+    """Toggle a bingo cell and sync the URL."""
     if index == FREE_INDEX:
         return
 
@@ -247,29 +254,13 @@ def toggle_cell(index: int) -> None:
     sync_state_to_url()
 
 
-def reset_celebrations() -> None:
-    st.session_state.celebrated_line_signatures = set()
-
-
 def apply_seed() -> None:
     seed = st.session_state.seed_input.strip() or DEFAULT_SEED
-
-    st.session_state.seed = seed
-    st.session_state.selected_cells = {FREE_INDEX}
-
-    reset_celebrations()
-    sync_state_to_url()
+    reset_to_seed(seed)
 
 
 def randomize_seed() -> None:
-    seed = hashlib.sha256(str(random.random()).encode()).hexdigest()[:10]
-
-    st.session_state.seed = seed
-    st.session_state.seed_input = seed
-    st.session_state.selected_cells = {FREE_INDEX}
-
-    reset_celebrations()
-    sync_state_to_url()
+    reset_to_seed(random_seed())
 
 
 def reset_marks() -> None:
@@ -279,16 +270,15 @@ def reset_marks() -> None:
     sync_state_to_url()
 
 
-# -----------------------------
-# Initial state
-# -----------------------------
+def initialise_state_from_url() -> None:
+    """Initialise Streamlit session state once from URL params."""
+    if "has_initialised" in st.session_state:
+        return
 
-url_seed = get_query_value("seed", DEFAULT_SEED) or DEFAULT_SEED
-url_selected = get_query_value("selected", "")
-url_signature = (url_seed, url_selected)
+    url_seed = get_query_value("seed", DEFAULT_SEED) or DEFAULT_SEED
+    url_selected = get_query_value("selected", "")
 
-if "url_signature" not in st.session_state:
-    st.session_state.url_signature = url_signature
+    st.session_state.has_initialised = True
     st.session_state.seed = url_seed
     st.session_state.seed_input = url_seed
     st.session_state.selected_cells = parse_selected_cells(url_selected)
@@ -296,205 +286,246 @@ if "url_signature" not in st.session_state:
 
     sync_state_to_url()
 
-if "celebrated_line_signatures" not in st.session_state:
-    st.session_state.celebrated_line_signatures = set()
-
 
 # -----------------------------
-# Data + derived state
+# Styling
 # -----------------------------
 
-words = load_words()
-board = generate_board(words, st.session_state.seed)
-
-selected = set(st.session_state.selected_cells)
-lines = completed_lines(selected)
-winning_indexes = {
-    index
-    for line in lines
-    for index in line
-}
-has_bingo = bool(lines)
-
-
-# -----------------------------
-# UI
-# -----------------------------
-
-st.title("🎯 Buzzword Bingo")
-st.caption("A deterministic bingo card generated from a seed in the URL.")
-
-with st.sidebar:
-    st.header("Card settings")
-
-    st.text_input(
-        "Seed",
-        key="seed_input",
-        help="The same seed always creates the same bingo card.",
-    )
-
-    col_a, col_b = st.columns(2)
-
-    with col_a:
-        st.button(
-            "Apply seed",
-            on_click=apply_seed,
-            use_container_width=True,
-        )
-
-    with col_b:
-        st.button(
-            "Random",
-            on_click=randomize_seed,
-            use_container_width=True,
-        )
-
-    st.button(
-        "Reset marked squares",
-        on_click=reset_marks,
-        use_container_width=True,
-    )
-
-    st.divider()
-
-    st.write(f"Loaded **{len(words)}** buzzwords.")
-
-    st.download_button(
-        "Download word CSV",
-        data=WORDS_CSV.read_text(encoding="utf-8"),
-        file_name="buzzwords.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-
-st.markdown(
-    """
-    <style>
-    div[data-testid="column"] div.stButton > button {
-        min-height: 96px;
-        width: 100%;
-        white-space: normal;
-        line-height: 1.15;
-        font-weight: 700;
-        border-radius: 12px;
-        padding: 0.55rem;
-        aspect-ratio: 1 / 1;
-    }
-
-    div[data-testid="stVerticalBlock"]:has(> div[data-testid="stHorizontalBlock"]) {
-        gap: 0.35rem;
-    }
-
-    @media (max-width: 640px) {
-        div[data-testid="column"] div.stButton > button {
-            min-height: 70px;
-            font-size: 0.72rem;
-            line-height: 1.05;
-            padding: 0.25rem;
+def inject_css() -> None:
+    st.markdown(
+        """
+        <style>
+        /*
+        Streamlit stacks st.columns vertically on narrow screens.
+        These rules force each bingo row to remain a 5-column grid.
+        */
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: nowrap !important;
+            gap: 0.25rem !important;
         }
 
-        div[data-testid="column"] {
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
             min-width: 0 !important;
-        }
-    }
-
-    @media print {
-        header,
-        footer,
-        [data-testid="stSidebar"],
-        [data-testid="stToolbar"] {
-            display: none !important;
+            flex: 1 1 0 !important;
+            width: 20% !important;
         }
 
-        .block-container {
-            padding-top: 1rem;
+        div[data-testid="column"] div.stButton {
+            width: 100%;
         }
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
-st.caption(
-    "Click a square to mark it. The app uses st.session_state for clicks "
-    "and mirrors the state into the URL."
-)
+        div[data-testid="column"] div.stButton > button {
+            width: 100%;
+            min-width: 0;
+            min-height: 96px;
+            aspect-ratio: 1 / 1;
+            white-space: normal;
+            line-height: 1.1;
+            font-weight: 700;
+            border-radius: 12px;
+            padding: 0.45rem;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            hyphens: auto;
+        }
+
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="stHorizontalBlock"]) {
+            gap: 0.25rem;
+        }
+
+        @media (max-width: 640px) {
+            .block-container {
+                padding-left: 0.35rem;
+                padding-right: 0.35rem;
+            }
+
+            div[data-testid="stHorizontalBlock"] {
+                gap: 0.15rem !important;
+            }
+
+            div[data-testid="column"] div.stButton > button {
+                min-height: 58px;
+                font-size: 0.58rem;
+                line-height: 1;
+                border-radius: 8px;
+                padding: 0.12rem;
+            }
+        }
+
+        @media (max-width: 380px) {
+            div[data-testid="column"] div.stButton > button {
+                min-height: 52px;
+                font-size: 0.52rem;
+                padding: 0.08rem;
+            }
+        }
+
+        @media print {
+            header,
+            footer,
+            [data-testid="stSidebar"],
+            [data-testid="stToolbar"] {
+                display: none !important;
+            }
+
+            .block-container {
+                padding-top: 1rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # -----------------------------
-# Board rendering
+# Rendering
 # -----------------------------
 
-board_container = st.container(border=False)
+def render_sidebar(words: list[str]) -> None:
+    with st.sidebar:
+        st.header("Card settings")
 
-with board_container:
-    for row_index, row in enumerate(board):
-        # Each row is grouped in a vertical container.
-        # The row itself is split into equal-width columns for mobile-friendly sizing.
-        with st.container(border=False):
-            columns = st.columns(
-                [1] * BOARD_SIZE,
-                gap="small",
-                vertical_alignment="center",
+        st.text_input(
+            "Seed",
+            key="seed_input",
+            help="The same seed always creates the same bingo card.",
+        )
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            st.button(
+                "Apply seed",
+                on_click=apply_seed,
+                use_container_width=True,
             )
 
-            for col_index, value in enumerate(row):
-                index = row_index * BOARD_SIZE + col_index
+        with col_b:
+            st.button(
+                "Random",
+                on_click=randomize_seed,
+                use_container_width=True,
+            )
 
-                is_free = index == FREE_INDEX
-                is_selected = index in selected
-                is_winning = index in winning_indexes
+        st.button(
+            "Reset marked squares",
+            on_click=reset_marks,
+            use_container_width=True,
+        )
 
-                if is_winning:
-                    label = f"🎉 {value}"
-                    button_type = "primary"
-                elif is_selected:
-                    label = f"✅ {value}"
-                    button_type = "primary"
-                else:
-                    label = value
-                    button_type = "secondary"
+        st.divider()
 
-                with columns[col_index]:
-                    with st.container(border=False):
+        st.write(f"Loaded **{len(words)}** buzzwords.")
+
+        st.download_button(
+            "Download word CSV",
+            data=WORDS_CSV.read_text(encoding="utf-8"),
+            file_name="buzzwords.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+
+def cell_label(value: str, index: int, selected: set[int], winning_indexes: set[int]) -> tuple[str, str]:
+    """Return the button label and Streamlit button type."""
+    if index in winning_indexes:
+        return f"🎉 {value}", "primary"
+
+    if index in selected:
+        return f"✅ {value}", "primary"
+
+    return value, "secondary"
+
+
+def render_board(
+    board: list[list[str]],
+    selected: set[int],
+    winning_indexes: set[int],
+) -> None:
+    board_container = st.container(border=False)
+
+    with board_container:
+        for row_index, row in enumerate(board):
+            with st.container(border=False):
+                columns = st.columns(
+                    [1] * BOARD_SIZE,
+                    gap="small",
+                    vertical_alignment="center",
+                )
+
+                for col_index, value in enumerate(row):
+                    index = row_index * BOARD_SIZE + col_index
+                    label, button_type = cell_label(value, index, selected, winning_indexes)
+
+                    with columns[col_index]:
                         st.button(
                             label,
                             key=f"cell_{index}",
                             type=button_type,
-                            disabled=is_free,
+                            disabled=index == FREE_INDEX,
                             on_click=toggle_cell,
                             args=(index,),
                             use_container_width=True,
                         )
 
 
+def render_status(lines: list[list[int]], selected: set[int]) -> None:
+    if lines:
+        new_lines = newly_completed_line_signatures(lines)
+
+        if new_lines:
+            st.balloons()
+            mark_lines_as_celebrated(new_lines)
+
+        line_word = "line" if len(lines) == 1 else "lines"
+        st.success(f"Bingo! You completed {len(lines)} {line_word}. 🎉")
+    else:
+        marked_count = len(selected) - 1
+        st.info(f"Marked **{marked_count}** squares. Keep going!")
+
+
+def render_footer(selected: set[int]) -> None:
+    share_suffix = f"?seed={st.session_state.seed}"
+
+    selected_text = selected_to_query_param(selected)
+    if selected_text:
+        share_suffix += f"&selected={selected_text}"
+
+    st.caption("Tip: use your browser's print command to save a card as PDF.")
+    st.caption(f"Share path: `{share_suffix}`")
+
+
 # -----------------------------
-# Celebration + status
+# App
 # -----------------------------
 
-if has_bingo:
-    new_completed_lines = get_new_completed_line_signatures(lines)
+def main() -> None:
+    initialise_state_from_url()
+    inject_css()
 
-    if new_completed_lines:
-        st.balloons()
-        mark_lines_as_celebrated(new_completed_lines)
+    words = load_words()
+    board = generate_board(words, st.session_state.seed)
 
-    line_word = "line" if len(lines) == 1 else "lines"
-    st.success(f"Bingo! You completed {len(lines)} {line_word}. 🎉")
-else:
-    marked_count = len(selected) - 1
-    st.info(f"Marked **{marked_count}** squares. Keep going!")
+    selected = set(st.session_state.selected_cells)
+    lines = completed_lines(selected)
+    winning_indexes = {
+        index
+        for line in lines
+        for index in line
+    }
+
+    st.title("🎯 Buzzword Bingo")
+    st.caption(
+        "Click a square to mark it. The app uses st.session_state for clicks "
+        "and mirrors the state into the URL."
+    )
+
+    render_sidebar(words)
+    render_board(board, selected, winning_indexes)
+    render_status(lines, selected)
+    render_footer(selected)
 
 
-# -----------------------------
-# Share hint
-# -----------------------------
-
-share_suffix = f"?seed={st.session_state.seed}"
-
-selected_text = selected_param(selected)
-if selected_text:
-    share_suffix += f"&selected={selected_text}"
-
-st.caption("Tip: use your browser's print command to save a card as PDF.")
+if __name__ == "__main__":
+    main()
