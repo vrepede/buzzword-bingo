@@ -11,7 +11,7 @@ import streamlit.components.v1 as components
 APP_TITLE = "Buzzword Bingo"
 WORDS_CSV = Path(__file__).parent / "buzzwords.csv"
 
-BOARD_SIZE = 6
+BOARD_SIZE = 5
 FREE_SPACE = "Vizrt Days 2026"
 DEFAULT_SEED = "vizrt-days-2026"
 
@@ -817,7 +817,7 @@ def main() -> None:
     st.header("🎯 Buzzword Bingo")
     st.markdown(
         """
-        🚀 **Welcome to Buzzword Bingo: Vizrt Days Edition!** 🚀
+        🔥 **Welcome to Buzzword Bingo: Vizrt Days 2026 Edition!** 🔥
 
         ✨ Like bingo, but with more AI, real-time graphics, and visual storytelling. ✨
         """
