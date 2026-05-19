@@ -11,9 +11,9 @@ import streamlit.components.v1 as components
 APP_TITLE = "Buzzword Bingo"
 WORDS_CSV = Path(__file__).parent / "buzzwords.csv"
 
-BOARD_SIZE = 5
+BOARD_SIZE = 6
 FREE_SPACE = "Vizrt Days 2026"
-DEFAULT_SEED = "team-all-hands"
+DEFAULT_SEED = "vizrt-days-2026"
 
 TOTAL_CELLS = BOARD_SIZE * BOARD_SIZE
 FREE_INDEX = TOTAL_CELLS // 2
@@ -814,7 +814,7 @@ def main() -> None:
     board_values = generate_board(words, st.session_state.seed)
     selected = set(st.session_state.selected_cells)
 
-    st.title("🎯 Buzzword Bingo")
+    st.header("🎯 Buzzword Bingo")
     st.markdown(
         """
         🚀 **Welcome to Buzzword Bingo: Vizrt Days Edition!** 🚀
