@@ -12,7 +12,7 @@ APP_TITLE = "Buzzword Bingo"
 WORDS_CSV = Path(__file__).parent / "buzzwords.csv"
 
 BOARD_SIZE = 5
-FREE_SPACE = "FREE SPACE"
+FREE_SPACE = "Vizrt Days 2026"
 DEFAULT_SEED = "team-all-hands"
 
 TOTAL_CELLS = BOARD_SIZE * BOARD_SIZE
@@ -22,6 +22,7 @@ st.set_page_config(
     page_title=APP_TITLE,
     page_icon="🎯",
     layout="centered",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -813,12 +814,12 @@ def main() -> None:
     board_values = generate_board(words, st.session_state.seed)
     selected = set(st.session_state.selected_cells)
 
-    st.subheader("🎯 Buzzword Bingo")
+    st.title("🎯 Buzzword Bingo")
     st.markdown(
         """
-        🎉 **Welcome to the most fabulous game of corporate speak!** 🎉
-        
-        It's like bingo, but *enterprise-ready*. ✨
+        🚀 **Welcome to Buzzword Bingo: Vizrt Days Edition!** 🚀
+
+        ✨ Like bingo, but with more AI, real-time graphics, and visual storytelling. ✨
         """
     )
 
